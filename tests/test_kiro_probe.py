@@ -18,6 +18,14 @@ def _load(name):
     return module
 
 
+def _load_report():
+    sys.path.insert(0, str(PROBE_DIR))  # report.py imports its sibling probe.py by bare name
+    try:
+        return _load("report")
+    finally:
+        sys.path.remove(str(PROBE_DIR))
+
+
 def _hook(tmp_path, event, payload, agent="autoharness-probe"):
     stdin = payload if isinstance(payload, str) else json.dumps(payload)
     return subprocess.run(
@@ -185,3 +193,11 @@ def test_report_without_a_log_says_the_hooks_never_ran(tmp_path):
         env={"AHPROBE_DIR": str(tmp_path), "PATH": ""})
     assert result.returncode == 1
     assert "hooks never ran" in result.stdout
+
+
+@pytest.mark.parametrize("version, verdict", [("3.10.12", "ok"), ("3.14.4", "ok"),
+                                              ("3.9.18", "TOO OLD"), ("None", "TOO OLD")])
+def test_report_says_whether_the_hook_python_can_run_autoharness(version, verdict):
+    report = _load_report()
+    lines = report.summarise([{"event": "agentSpawn", "agent": "a", "python": version}])
+    assert f"autoharness needs Python 3.10+: {verdict}" in lines

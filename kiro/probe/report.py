@@ -14,6 +14,14 @@ from collections import Counter, defaultdict
 from probe import log_dir
 
 _ID_HINTS = ("session", "conversation", "transcript", "agent")
+MIN_PYTHON = (3, 10)  # the floor the Kiro port targets (docs/kiro-port-spec.md 4.9); upstream needs 3.11
+
+
+def _meets_floor(version):
+    try:
+        return tuple(int(part) for part in version.split(".")[:2]) >= MIN_PYTHON
+    except ValueError:
+        return False
 
 
 def _shape(value):
@@ -40,7 +48,10 @@ def summarise(entries):
     lines = []
     if not entries:
         return ["no hook calls were logged: the hooks never ran"]
-    lines.append(f"python (hook interpreter): {sorted({e.get('python') for e in entries})}")
+    versions = sorted({str(e.get("python")) for e in entries})
+    lines.append(f"python (hook interpreter): {versions}")
+    lines.append(f"autoharness needs Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+: "
+                 + ("ok" if all(_meets_floor(v) for v in versions) else "TOO OLD"))
     lines.append(f"parent process: {sorted({str(e.get('parent_cmd')) for e in entries})}")
     lines.append(f"distinct parent pids: {len({e.get('ppid') for e in entries})}")
     lines.append(f"env var names: {sorted({n for e in entries for n in e.get('env_names', [])})}")

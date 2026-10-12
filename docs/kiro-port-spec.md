@@ -16,7 +16,8 @@ autoharness is roughly 90% host-agnostic Python (stdlib only) and 10% Claude Cod
 replaces the glue and changes where and when the reflector runs. The rest of the pipeline is
 untouched.
 
-- **Constraints.** A locked-down work setup on Kiro CLI 2.x, believed to be around 2.7. No API
+- **Constraints.** A locked-down work setup on Kiro CLI 2.x, believed to be around 2.7, on an
+  Ubuntu 22.04 base, whose `python3` is 3.10. No API
   key, so no headless runs. Custom hooks and custom agents are allowed. Whether a local MCP server
   is allowed is unknown.
 - **Packaging.** No plugin and nothing published. Installation is a local script that writes one
@@ -341,7 +342,23 @@ outside the stricter set. autoharness also writes a `category` frontmatter key; 
 level if Kiro tolerates unknown keys (S5), otherwise move it to `metadata.category` and teach the
 index to read both.
 
-**Promoter, ledger, sidecar, lifecycle, redaction, notify.** No change.
+**Python 3.10 (`lib/redact.py`, `hook/dispatch.py`).** Upstream requires 3.11, and Ubuntu 22.04
+ships 3.10. The only thing in `src/` that needs 3.11 is `tomllib`, used once to load
+`lib/redaction_rules.toml`. Checked on 2026-10-12 in a Python 3.10 container: with a TOML parser
+supplied and the version guard lowered, 543 of 544 tests pass, and the one failure is the test
+that asserts the guard's message names 3.11. The port therefore lowers the floor to 3.10:
+
+- `lib/redact.py` uses `tomllib` when it exists and otherwise a small stdlib-only reader for the
+  subset the rules file uses (`[[table]]` headers, `key = "string"`, `key = '''literal'''`,
+  comments). It rejects anything outside that subset instead of guessing, because a misread
+  redaction rule fails open. A test loads the shipped rules file through both readers and asserts
+  identical results.
+- `MIN_PYTHON` in `hook/dispatch.py` becomes `(3, 10)`, with the README badge, the guard's test and
+  the CI matrix updated to match and 3.10 added to the matrix.
+- No third-party dependency is added. `tomli` would do the same job, but upstream's zero-dependency
+  rule exists so the hooks work with a bare interpreter, and `pip` may not be available at work.
+
+**Promoter, ledger, sidecar, lifecycle, notify.** No change.
 
 **Configuration.** `AUTOHARNESS_*` variables are unchanged apart from the new
 `AUTOHARNESS_REFLECT_MODE`. They are set in the shell environment, or baked into the hook command
@@ -376,7 +393,7 @@ as upstream does.
 Updating is `git pull`; the installed files point at the checkout, so there is no cached copy. The
 installer only needs re-running when a template changes.
 
-Requirements on the work machine: Python 3.11+ as `python3`, permission to add an agent file and
+Requirements on the work machine: Python 3.10+ as `python3` (stock on Ubuntu 22.04), permission to add an agent file and
 select it (confirmed allowed), and either a local MCP server or shell access for the staging route.
 
 For a work setup it is also worth knowing what the tool stores: learned skills under
@@ -419,17 +436,21 @@ run where Kiro is installed. S1 to S3 decide the design; the rest tune it.
 
 1. **Adapter seam, no behaviour change.** Introduce `host/`, move Claude behaviour into
    `host/claude.py`, default `AUTOHARNESS_HOST=claude` for this phase. Existing tests pass untouched.
-2. **Kiro adapter, roots, install.** `host/kiro.py`, agent templates, `install.py`, name-rule
+2. **Python 3.10.** The TOML fallback reader and the lowered floor (4.9). Independent of Kiro and
+   small enough to offer upstream on its own.
+3. **Kiro adapter, roots, install.** `host/kiro.py`, agent templates, `install.py`, name-rule
    tightening, session key, default host flipped to `kiro`. At the end of this phase counters, the
    index and the lifecycle pass work on Kiro.
-3. **Prompt-time reflection.** `hook/reflect.py`, the turn-boundary refactor, `autoharness learn`,
+4. **Prompt-time reflection.** `hook/reflect.py`, the turn-boundary refactor, `autoharness learn`,
    the write guard, the MCP staging route.
-4. **CLI staging route**, if S3 requires it.
-5. **Prompt-time curation.**
-6. **Docs.** README rewritten for Kiro; upstream README kept as `docs/claude-code.md`.
+5. **CLI staging route**, if S3 requires it.
+6. **Prompt-time curation.**
+7. **Docs.** README rewritten for Kiro; upstream README kept as `docs/claude-code.md`.
 
 ### Tests
 
+- TOML fallback: the shipped rules file parses identically through `tomllib` and the fallback;
+  unsupported syntax raises. The whole suite runs on 3.10 in CI.
 - `host/kiro.py`: `normalize` over recorded payload fixtures from S1, both tool-name spellings;
   output protocol and exit codes.
 - Turn boundary: each `userPromptSubmit` counts one request and drains the queue; threshold crossed

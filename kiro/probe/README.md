@@ -7,8 +7,9 @@ It is not part of autoharness and installs nothing permanent.
 What it does: adds three agents to `~/.kiro/agents/` whose hooks log what Kiro sends them and print
 marker words. You then ask the model which marker words it can see. Takes about ten minutes.
 
-Needs `python3` (any 3.6+) and a POSIX shell. Nothing is sent anywhere; the log stays in
-`~/autoharness-probe/`.
+Needs `python3` and a POSIX shell. The probe is tested on Python 3.10 and newer (3.10 is what
+Ubuntu 22.04 ships) and also runs on older versions, so it can tell you when the interpreter is too
+old for the port. Nothing is sent anywhere; the log stays in `~/autoharness-probe/`.
 
 ## 1. Install
 
@@ -18,7 +19,9 @@ python3 --version
 python3 kiro/probe/setup.py
 ```
 
-Note both version numbers. autoharness itself needs Python 3.11+, so the second one matters.
+Note both version numbers. Upstream autoharness needs Python 3.11+ and the Kiro port plans to
+lower that to 3.10; the report in step 4 says whether the interpreter your hooks actually ran
+under meets 3.10.
 
 If your Kiro has `kiro-cli agent validate`, run it on `~/.kiro/agents/autoharness-probe.json` and
 note whether it passes.
