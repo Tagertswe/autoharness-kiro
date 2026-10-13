@@ -169,6 +169,10 @@ def promote(intent, *, roots=None, repo_name=None):
         base_dir = layer.symbol_dir(level, name, root)
     except (ValueError, KeyError) as exc:
         return _reject(action, level, [("shape", str(exc))])
+    # a skill the user wrote or installed under the same name: a create would replace its body
+    if action == "create" and base_dir.exists() and not sidecar.is_agent_created(level, name, root):
+        return _reject(action, level, [("routing", f"a skill named {name!r} already exists at the {level} "
+                                        "level and was not created by autoharness; choose another name")])
 
     target_created = sidecar.is_agent_created(level, name, root) if action in _MODIFY else None
 

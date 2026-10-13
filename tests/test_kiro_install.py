@@ -151,6 +151,40 @@ def test_into_merges_hooks_without_disturbing_the_agent_and_uninstall_reverses_i
     assert not (agents / "autoharness-curator.json").exists()
 
 
+def test_edits_made_to_the_agent_after_the_merge_survive_uninstall(home):
+    agents = home / "agents"
+    agents.mkdir(parents=True)
+    (agents / "work.json").write_text(json.dumps({"name": "work", "prompt": "be terse", "tools": ["read"]}))
+    install.install(agents, _values(), home, into="work")
+    edited = _load(agents / "work.json")
+    edited["prompt"] = "be thorough"
+    edited["tools"].append("shell")
+    edited["hooks"]["stop"].append({"command": "echo later"})
+    edited["hooks"]["postToolUse"] = [{"command": "echo post"}]
+    edited["resources"].append("file://NOTES.md")
+    edited["mcpServers"]["other"] = {"command": "x"}
+    (agents / "work.json").write_text(json.dumps(edited))
+
+    install.uninstall(agents)
+    assert _load(agents / "work.json") == {
+        "name": "work", "prompt": "be thorough", "tools": ["read", "shell"],
+        "hooks": {"stop": [{"command": "echo later"}], "postToolUse": [{"command": "echo post"}]},
+        "resources": ["file://NOTES.md"], "mcpServers": {"other": {"command": "x"}}}
+
+
+def test_into_an_agent_with_its_own_stage_skill_server_is_refused_untouched(home):
+    agents = home / "agents"
+    agents.mkdir(parents=True)
+    text = json.dumps({"name": "work", "mcpServers": {"stage_skill": {"command": "mine", "args": ["serve"]}}})
+    (agents / "work.json").write_text(text)
+    with pytest.raises(SystemExit, match="already has an MCP server named stage_skill"):
+        install.install(agents, _values(), home, into="work")
+    assert (agents / "work.json").read_text() == text
+    assert not (agents / ("work.json" + install.BACKUP_SUFFIX)).exists()
+    install.uninstall(agents)  # whatever the refused run left behind is cleaned up, the agent is not
+    assert (agents / "work.json").read_text() == text
+
+
 def test_into_a_missing_agent_fails_before_touching_anything(home):
     with pytest.raises(SystemExit, match="cannot merge into"):
         install.install(home / "agents", _values(), home, into="nope")

@@ -209,6 +209,10 @@ def install(agents, values, home, *, python="python3", into=None):
         agent = _read(path)
         if agent is None:
             raise SystemExit(f"cannot merge into {path}: not found or not a JSON object")
+        theirs = (agent.get("mcpServers") or {}).get("stage_skill")
+        if theirs is not None and "autoharness.stage_skill.server" not in (theirs.get("args") or []):
+            raise SystemExit(f"cannot merge into {path}: it already has an MCP server named stage_skill "
+                             "that is not autoharness's; rename it first")
         backup = path.with_name(path.name + BACKUP_SUFFIX)
         if not backup.exists():
             shutil.copy2(path, backup)

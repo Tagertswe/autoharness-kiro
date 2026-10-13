@@ -117,6 +117,18 @@ def test_update_requires_agent_created(tmp_path):
     assert v2["ok"] and "isoformat" in skill_store.read_body("project", "foo", root)
 
 
+def test_create_never_replaces_a_skill_the_user_wrote(tmp_path):
+    roots = _roots(tmp_path)
+    for level in layer.LAYERS:
+        mine = layer.symbol_dir(level, "foo", roots[level])
+        mine.mkdir(parents=True)
+        (mine / "SKILL.md").write_text("MINE\n")
+        v = promoter.promote(_create("foo", level=level), roots=roots)
+        assert not v["ok"] and "routing" in _families(v)
+        assert (mine / "SKILL.md").read_text() == "MINE\n"
+        assert sorted(p.name for p in mine.iterdir()) == ["SKILL.md"]
+
+
 def test_patch_rebuilds_from_live(tmp_path):
     roots = _roots(tmp_path)
     root = roots["project"]
