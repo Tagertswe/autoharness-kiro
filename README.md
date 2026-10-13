@@ -68,7 +68,53 @@ the hooks to an agent you already have.
 
 In a session, type `autoharness learn` to distill the conversation now, `autoharness status` to list
 merge requests opened so far and skill changes not yet published, and `autoharness publish` to open
-a merge request (shared repository only).
+a merge request (shared repository only). `autoharness usage` shows what its own extra turns added up
+to; each one is logged per day under `~/.kiro/autoharness/usage/`.
+
+**How it connects to Kiro.** Four hooks, one local tool and the skill folders; Kiro itself is not
+modified.
+
+```
+                      kiro-cli session  (your agent, e.g. with --into)
+ ┌──────────────────────────────────────────────────────────────────────────┐
+ │   you ── prompt ──▶  agent  ── tool calls ──▶  files, shell, git         │
+ └──────┬─────────────────┬──────────────────┬──────────────────┬───────────┘
+        │ session start   │ each prompt      │ before each      │ end of
+        │                 │                  │ tool call        │ each turn
+        ▼                 ▼                  ▼                  ▼
+ ┌──────────────────────────────────────────────────────────────────────────┐
+ │                    autoharness hooks  (local Python)                     │
+ │  list learned     autoharness        count the call     land staged      │
+ │  skills, show     learn | status |   block direct       skills, then     │
+ │  new MR links     publish | usage    edits of learned   ask for ONE      │
+ │                                      skills             more turn if due │
+ └──────────────────────────────────────────────────────┬───────────────────┘
+                                                        │ "reflect" / "publish"
+                                                        ▼
+   1. REFLECT   agent reviews the conversation and proposes skills
+                     │  stage_skill tool (local MCP server)
+                     ▼
+   2. QUEUE     proposals wait; nothing is written yet
+                     │  end of that turn
+                     ▼
+   3. VALIDATE  plain Python, no model: format, size, secrets, paths,
+                never replaces a skill it did not create
+                     │  accepted                      rejected ──▶ reason logged
+                     ▼
+   4. STORE     <skills folder>/<name>/SKILL.md  ──▶ loaded by Kiro next session
+                     │  shared repository configured
+                     ▼
+   5. PUBLISH   agent opens a merge request with git (your approval prompts)
+                     │
+                     ▼
+   6. NOTE      full MR link shown in this session, once in every other
+                session, and kept in ~/.kiro/autoharness/
+
+   Every extra turn in steps 1, 5 and 6 is logged per day in
+   ~/.kiro/autoharness/usage/.   No network calls are made by autoharness.
+```
+
+Step 5 runs when you type `autoharness publish`, or on its own with `AUTOHARNESS_AUTO_PUBLISH=1`.
 
 **Optional: keep learned skills in a team repository.** Before running the installer:
 
