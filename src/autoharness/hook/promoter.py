@@ -30,7 +30,7 @@ import hashlib
 import json
 import re
 
-from autoharness import config
+from autoharness import config, host
 from autoharness.lib import (
     atomic,
     counters,
@@ -54,7 +54,8 @@ def _reject(action, level, findings):
 
 def _resolve_level(intent, roots):
     if intent.get("action") == "create":
-        return intent.get("level")
+        level = intent.get("level")
+        return layer.GLOBAL if config.DISABLE_PROJECT and level == layer.PROJECT else level
     return skill_store.find(intent.get("name"), roots)
 
 
@@ -160,6 +161,8 @@ def promote(intent, *, roots=None, repo_name=None):
         return _reject(action, level,
                        [("routing", "global layer is disabled by AUTOHARNESS_DISABLE_GLOBAL")])
 
+    if action == "create" and host.skill_name_error(name):
+        return _reject(action, level, [("shape", host.skill_name_error(name))])
     root = roots.get(level)
     try:
         body = _shape(intent, level, root)

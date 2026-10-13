@@ -22,7 +22,7 @@ import re
 import subprocess
 import sys
 
-MIN_PYTHON = (3, 11)  # tomllib (lib/redact.py) entered the stdlib here; README badge and CI matrix pin the same floor
+MIN_PYTHON = (3, 10)  # Ubuntu 22.04's python3; tomllib (3.11) has a stdlib-only fallback in lib/minitoml.py. README and CI matrix pin the same floor
 
 
 def _below_floor(version):
@@ -32,14 +32,14 @@ def _below_floor(version):
 
 
 # this guard runs before the package imports on purpose: the chain below is module level end to end
-# (dispatch -> promoter -> redact -> tomllib), so on an older interpreter the process dies at import
+# and uses 3.10 syntax and stdlib, so on an older interpreter the process dies at import
 # and the fail-safe in dispatch() never gets the chance to catch it -- the host shows a generic hook
 # error and nothing inside the plugin names the cause. Exit 0: a host hook must not fail the session.
 if sys.version_info[:2] < MIN_PYTHON:
     print(_below_floor(sys.version_info), file=sys.stderr)
     raise SystemExit(0)
 
-from autoharness import config  # noqa: E402
+from autoharness import config, host  # noqa: E402
 from autoharness.hook import (  # noqa: E402
     on_session_end,
     on_session_start,
@@ -47,6 +47,7 @@ from autoharness.hook import (  # noqa: E402
     on_stop,
     promoter,
 )
+from autoharness.host import claude  # noqa: E402
 from autoharness.lib import counters, layer  # noqa: E402
 
 _SANITIZE = re.compile(r"[^A-Za-z0-9_-]")
@@ -159,24 +160,7 @@ def dispatch(event, *, roots=None, reflect=None, consolidate=None):
     return {"ignored": True, "reason": f"unrouted event: {name!r}"}
 
 
-def _emit(verdict):
-    if verdict.get("deny"):
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": verdict.get("reason", "denied"),
-        }}))
-        return
-    result = verdict.get("result") or {}
-    if verdict.get("handled") == "SessionStart" and result.get("context"):
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": result["context"],
-        }}))
-        return
-    handled = verdict.get("handled")
-    if handled:
-        print(json.dumps({"handled": handled, "result": result}), file=sys.stderr)
+_emit = claude.emit  # the Claude output protocol, kept under its old name for callers and tests
 
 
 def main():
@@ -184,6 +168,11 @@ def main():
         event = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         return 0  # malformed hook input → ignore, never crash the host
+    if host.name() == host.KIRO:
+        from autoharness.hook import (
+            kiro_dispatch,  # imported only where used: Claude sessions never load it
+        )
+        return kiro_dispatch.run(event)
     _emit(dispatch(event))
     return 0
 

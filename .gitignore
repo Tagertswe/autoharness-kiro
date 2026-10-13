@@ -11,7 +11,12 @@ venv/
 dist/
 build/
 
+# local, site-specific settings: never committed (only the placeholder example is)
 .env
+.env.*
+*.env
+!.env.example
+.envrc
 .DS_Store
 .CLAUDE.md
 

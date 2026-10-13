@@ -1,7 +1,9 @@
 # Spec: porting autoharness to Kiro CLI 2.x
 
-Status: draft for review, revision 4. Nothing in this document is implemented except the probe in
-`kiro/probe/`. Revised 2026-10-13 with the probe's results from the work machine (section 7).
+Status: revision 6. Implemented on 2026-10-13, phases 1 to 8, with unit tests and a real-process
+end-to-end test. Not yet run inside a real Kiro session: the first-run checklist in
+[kiro.md](kiro.md) covers what could not be tested without one. Where the code differs from the
+design below, section 12 says how.
 Written 2026-10-12 against upstream `tigerless-labs/autoharness` at `3252d25` (plugin version 0.5.3).
 
 Revision history:
@@ -14,6 +16,9 @@ Revision history:
   turn and can make the agent take another turn, the payload carries a session id, and local MCP
   servers, `skill://` resources and subagents all work. Reflection moves back to the end of the
   turn, counters are per session again, and the CLI staging route is dropped.
+- r5: learned skills live in a folder of a shared skills repository and reach it through merge
+  requests (4.10).
+- r6: implemented. Section 12 lists the deviations from the design.
 
 ## 1. Summary
 
@@ -241,6 +246,24 @@ lists the skill directories as `skill://` resources.
   read `<skills dir>/<name>/SKILL.md`; upstream already has this hint for worktree sessions
   (`on_session_start._read_hint`).
 
+**Skills autoharness did not create.** A developer's machine already has skills: installed ones in
+`~/.kiro/skills/`, and hand-written ones in the shared repository. The port treats them as upstream
+does, read but never changed.
+
+- Recall: Kiro's docs say the built-in default agent loads skills automatically and a custom agent
+  only loads what its `resources` list. The installer therefore always lists
+  `~/.kiro/skills/*/SKILL.md` (as an absolute path) next to the learned-skills folder, so switching
+  to the `autoharness` agent does not cost you the skills you already had. `--into` leaves an
+  existing agent's own `resources` as they are.
+- Reflection: the agent compares a new lesson against every skill it has loaded, so it does not
+  re-learn what an installed skill already says. Upstream gives its reflector an index of both
+  layers for this; on Kiro the loaded skill metadata is already in the agent's context.
+- Changes: the promoter rejects any intent against a skill whose sidecar does not say
+  `created_by: agent`. Installed and hand-written skills are never patched, merged, archived or
+  counted. The curator is only shown agent-created skills.
+- When the learned-skills folder is redirected (4.10), `~/.kiro/skills/` is no longer the global
+  layer's directory. It stays in `resources` for recall and is otherwise untouched.
+
 Usage counting follows from this. A `read` of `<skill>/SKILL.md` counts as `use` and a read of any
 other file in the skill directory counts as `view`. Reads made while a reflection or curation job
 is pending are not counted, since comparing against the library is not using it. One `read` call
@@ -312,8 +335,8 @@ The main agent as installed:
 
 It sets no `prompt` and no tool restrictions, so it behaves like the built-in default agent with
 hooks added. `allowedTools` is deliberately left out so your normal approval prompts are unchanged.
-The probe's agents used the same fields and loaded on 2.29.1; `kiro-cli agent validate` has not
-been run on them yet (section 7).
+The probe's agents used the same fields, loaded on 2.29.1, and the main one passed
+`kiro-cli agent validate --path <file>`.
 
 If you already work in a custom agent, `--into <agent>` merges only the `hooks` entries, the
 `stage_skill` server and the curator permission into that agent's file, after backing it up.
@@ -373,6 +396,138 @@ that asserts the guard's message names 3.11. The port therefore lowers the floor
 prefix with the installer's `--env`. `AUTOHARNESS_CARRIER` and `AUTOHARNESS_DIGEST_EXCHANGES` have no
 effect on Kiro.
 
+### 4.10 Shared skills repository and merge requests
+
+At work, Kiro skills are collected in an internal repository. For the trial, self-learned skills
+get their own folder there, `self-learning-skills/`, and changes reach the repository through merge
+requests opened with a skill that already exists in that repository.
+
+**Site-specific names stay out of this repository.** This fork is public. The shared repository's
+name, its path, and the merge-request skill's location are local settings and are never committed.
+They live in a `.env` file at the root of this checkout, which `.gitignore` already excludes. A
+committed `.env.example` documents the keys with placeholder values.
+
+- The file is plain `KEY=value` lines. `install.py` reads it with a few lines of stdlib code (no
+  `python-dotenv`) and writes the values into the hook commands of the agent config under
+  `~/.kiro/agents/`, which is outside this repository. The hooks themselves never read `.env`, so
+  changing a value means re-running the installer.
+- A value may refer to an earlier key as `${KEY}`. That is the only expansion: no command
+  substitution, no defaults, and an unknown key is an error, not an empty string.
+- Values already set in the shell environment win over the file.
+- Docs, tests, fixtures and commit messages use placeholders such as `/path/to/shared-skills-repo`.
+  A test asserts that `.env` is ignored by git and that `.env.example` contains no absolute path
+  outside `/path/to/`.
+
+**Where skills live.** The global layer's skills directory becomes configurable and points into a
+clone of the shared repository. There is one copy of each skill: the promoter writes into the
+clone's working tree, Kiro recalls from the same files, and git carries them to the repository.
+
+```
+AUTOHARNESS_SHARED_SKILLS_REPO=/path/to/shared-skills-repo
+AUTOHARNESS_GLOBAL_SKILLS_DIR=${AUTOHARNESS_SHARED_SKILLS_REPO}/self-learning-skills
+AUTOHARNESS_DISABLE_PROJECT=1
+AUTOHARNESS_PUBLISH_SKILL=${AUTOHARNESS_SHARED_SKILLS_REPO}/<folder of the repository's skills, or one SKILL.md>
+```
+
+- `AUTOHARNESS_SHARED_SKILLS_REPO` (new) is the one place the shared repository is named. The other
+  values refer to it, and the hooks use it as the directory to run `git status` in.
+
+- `AUTOHARNESS_GLOBAL_SKILLS_DIR` (new) overrides `~/.kiro/skills` for the global layer. Today
+  `lib/layer.py` derives the skills directory from the layer root, so this is a second override
+  next to the root. State (queue, ledger, counters, snapshots) stays in `~/.kiro/autoharness/`,
+  outside the repository.
+- `AUTOHARNESS_DISABLE_PROJECT` (new, the mirror of the existing `AUTOHARNESS_DISABLE_GLOBAL`)
+  sends every learned skill to the global layer. Nothing is then written into the repositories you
+  work in, so learned skills cannot be committed to them by accident.
+- The agent config lists `skill://<that folder>/*/SKILL.md` as an absolute path, the form the probe
+  confirmed.
+
+**What is kept out of git.** The promoter and the hooks write three things into a skill directory
+that should not be in a merge request. The installer adds a `.gitignore` in `self-learning-skills/` for
+them:
+
+| Path | Why it stays local |
+|---|---|
+| `*/.sidecar.json` | Per-skill counters, rewritten on every use. Committing them would dirty the tree constantly. |
+| `.archive/` | Archived skills. In git an archived skill shows up as a deletion, which is the right reading. |
+| `*/references/evidence-*.md` | Redacted quotes from the sessions a skill was learned from. A shared repository gets the lesson, not the session. |
+
+A consequence of leaving the sidecar out: on a fresh clone the skills have no `created_by` record,
+so autoharness on that machine treats them as user-authored and does not manage them. That is
+acceptable for a one-person trial and has to be solved before a second person joins.
+
+**Opening a merge request.** Never automatic. A prompt that starts with `autoharness publish`
+makes the `userPromptSubmit` hook inject an instruction, the same mechanism as `autoharness learn`:
+
+- The hook runs `git status --porcelain -- self-learning-skills` in the clone and builds a summary from
+  it and from the ledger: which skills were created, updated or archived since the last publish,
+  one line each.
+- The instruction tells the agent to follow the existing merge-request skill, limit the change to
+  `self-learning-skills/`, and use the summary as the description.
+- The agent does the git work through its shell tool under your normal approval prompts.
+  autoharness itself never commits, pushes or calls the GitLab API.
+- The `agentSpawn` line reports how many skill changes are not yet in a merge request, so they do
+  not pile up unnoticed.
+
+The agent has to be able to see the existing skill, so the installer takes its location from
+`AUTOHARNESS_PUBLISH_SKILL` in `.env` and adds it to the agent's `skill://` resources. With `--into`
+an agent that already loads the shared repository's skills, nothing needs adding.
+
+**Automatic publish.** `AUTOHARNESS_AUTO_PUBLISH=1` removes the prompt. At a stop where no
+reflection or consolidation is due, and at the stop that ends a learning turn, unpublished changes
+make the stop hook block once more with the publish instruction. The agent's reply has to end with
+a fixed-form note carrying the full merge request link, which is how the session that opened it
+shows it. The stop that ends a publish turn never blocks, so the chain is at most work, learn,
+publish. One attempt is made per change set (remembered in `~/.kiro/autoharness/auto_publish.json`
+and cleared on success), so a publish that fails or is declined is not requested every turn. In
+prompt mode the instruction is attached to the next prompt instead. If the tree went clean but no
+link was found in the reply, the session is not marked as told and gets the note at its next prompt.
+
+**Announcing the merge request in other sessions.** Once a merge request exists, every running
+session that uses the autoharness agent mentions it once, with the link.
+
+- Capturing the link: the publish instruction tells the agent to end its reply with the merge
+  request URL. The `stop` hook for that turn reads `assistant_response`, which the probe showed is in
+  the payload, takes the URL from it, and appends a record (time, URL, the summary lines) to
+  `~/.kiro/autoharness/publishes.jsonl`. autoharness still makes no network call; it only reads what
+  the agent said. If no URL is found, the record is written without one and the note says so.
+- Showing it: each record is queued for every session, and a session delivers it at whichever of
+  its hooks runs first. Which sessions have delivered which record is tracked by `session_id`.
+  - `stop`: when a session finishes the turn it was working on, the hook asks for one more short
+    turn whose only instruction is to tell you what was created or revised and give the link. This
+    is the same block mechanism as reflection, with the same loop guard. A session that was busy
+    when the merge request was opened therefore reports it as soon as its current action ends.
+  - `userPromptSubmit`: a session that was idle delivers the note with its next answer.
+  - `agentSpawn`: a new session lists the merge requests recorded in the last few days.
+- If a reflection or curation is due at the same `stop`, the note is added to that instruction, so
+  it is never held back by the one-job rule.
+- The note reaches you through the agent. The probe confirmed that hook output reaches the model
+  and that a `stop` block produces a visible reply; whether Kiro also shows hook output on screen
+  directly is unchecked.
+- An idle session cannot be written to. It shows the note when you next use it.
+- Nothing is lost if a note is missed. The records are permanent, and a prompt that starts with
+  `autoharness status` lists every recorded merge request with its link and date, along with the
+  changes not yet published. The installer also prints where the record file is.
+- The record holds an internal URL. It lives in the state directory under the home directory, never
+  in this repository or the shared one.
+- Not covered: whether the merge request was later merged or closed. That would need the GitLab
+  API. A local approximation is possible after a `git pull` (the published commit is on the default
+  branch) and is left for later.
+
+**Review changes come back through git.** A reviewer's edit lands on the default branch and reaches
+your clone with `git pull`. Recall reads the files as they are, so the edited skill is what Kiro
+uses from then on. How the promoter treats a later update to a skill whose text changed outside
+the ledger has to be checked against `hook/promoter.py` before this phase is built.
+
+**Use a dedicated clone of the shared repository.** The folder Kiro recalls from is whatever branch that clone has checked
+out. A clone (or git worktree) used only for this keeps your skills from changing when you switch
+branches for other documentation work.
+
+**The write guard still applies.** The `write` tool is denied inside `self-learning-skills/` (4.4). The
+merge-request skill is unaffected as long as it works through git commands. Asking the agent to
+apply a review comment by editing a skill file is refused; it stages an update instead, or you edit
+by hand.
+
 ## 5. Running locally, without publishing
 
 Yes. Nothing in this design uses a registry, a marketplace, an API key or any network service of
@@ -424,6 +579,8 @@ everything per-project.
 | R9 | One `userPromptSubmit` was not logged during the probe (eight prompts sent, seven logged) | An `autoharness learn` prompt could occasionally go unnoticed | Unexplained so far; nothing else depends on this event in `stop` mode, and repeating the prompt recovers |
 | R10 | Four Python starts per turn plus one per tool call | Latency | Same order of cost as on Claude today; hooks do no model calls |
 | R11 | Work later moves to CLI V3 | Hook location and names change | Section 9 |
+| R12 | Learned skills go to a shared repository | Text distilled from your sessions becomes visible to everyone with access | Publishing is manual and goes through a reviewed merge request; evidence files are ignored by git; read the diff before opening it |
+| R13 | The skills folder is a git working tree | Switching branches or a conflicting pull changes what Kiro recalls | Dedicated clone; the hooks only ever read git status there |
 
 ## 7. Probe results and what is still unchecked
 
@@ -433,7 +590,7 @@ hooks launched by `kiro-cli-chat`.
 | Spike | Question | Result |
 |---|---|---|
 | S1 | Payload fields; session id; does `userPromptSubmit` stdout reach the model? | Fields as in section 3. `session_id` present on every event. Stdout reaches the model and is fresh each turn. |
-| S2 | Do the agent configs load? | Yes, all three. `kiro-cli agent validate` and the default-agent setting were not tried. |
+| S2 | Do the agent configs load? | Yes, all three. `kiro-cli agent validate --path <file>` printed no errors for the main probe agent. `kiro-cli agent set-default` exists; it was not run. |
 | S3 | Local stdio MCP server | Starts and its tool is callable (`@ahprobe/probe_echo`). |
 | S4 | Does `stop` fire, and can it hold the turn open? | Fires every turn. The block decision produced a continued turn. Plain stdout did not reach the model. |
 | S5 | `skill://` resources | Metadata is put in context; the body is read on demand with `read`. An unknown frontmatter key is tolerated. |
@@ -447,8 +604,11 @@ Still unchecked, none of which blocks starting:
 2. Whether the parent agent's hooks run for tool calls made inside a subagent. The probe's subagent
    made none.
 3. How `stop` handles a long `reason` (R3).
-4. `kiro-cli agent validate` on the template, and making the agent the default.
+4. Whether Kiro shows hook output to the user or only to the model (4.10).
 5. Why one `userPromptSubmit` was not logged (R9).
+6. Whether a `stop` hook can block twice in a row. Automatic publish after a learning turn needs
+   it; the probe blocked once. If it cannot, the publish is asked for at the end of the next turn
+   only when that turn is not itself a learning turn, so set `AUTOHARNESS_REFLECT_MODE=prompt`.
 
 ## 8. Implementation phases
 
@@ -463,7 +623,10 @@ Still unchecked, none of which blocks starting:
    its loop guard, `autoharness learn`, the write guard, the `stage_skill` server in the agent.
 5. **Prompt-mode fallback.** `AUTOHARNESS_REFLECT_MODE=prompt`.
 6. **End-of-turn curation.**
-7. **Docs.** README rewritten for Kiro; upstream README kept as `docs/claude-code.md`.
+7. **Shared skills repository.** `.env` loading in the installer, `AUTOHARNESS_SHARED_SKILLS_REPO`,
+   `AUTOHARNESS_GLOBAL_SKILLS_DIR`,
+   `AUTOHARNESS_DISABLE_PROJECT`, the `.gitignore`, `autoharness publish`, the unpublished count (4.10).
+8. **Docs.** README rewritten for Kiro; upstream README kept as `docs/claude-code.md`.
 
 ### Tests
 
@@ -483,6 +646,19 @@ Still unchecked, none of which blocks starting:
   instruction is pending.
 - `install.py`: idempotence, `--into` merge preserves the rest of the agent file, uninstall removes
   only its own entries, refusal to overwrite foreign files. All against a temporary home directory.
+- `.env` loading: `${KEY}` expands to an earlier key, an unknown key raises, the shell environment
+  wins, comments and blank lines are skipped.
+- Shared skills repository: the global skills directory override is honoured by promoter, index,
+  lifecycle and write guard while state stays under the home directory;
+  `AUTOHARNESS_DISABLE_PROJECT` routes project intents to global; the generated `.gitignore` keeps
+  sidecar, archive and evidence files out of `git status`; `autoharness publish` injects a summary
+  that matches a scripted set of changes and injects nothing when the tree is clean; the `stop`
+  hook records the URL from `assistant_response` and records without one when none is present; a
+  second session announces each record exactly once, at `stop` or at `userPromptSubmit` whichever
+  comes first, and nothing after that; a note due together with a reflection is carried in the same
+  instruction; `autoharness status` lists all records;
+  no code path
+  runs a git command that writes. All against a temporary git repository.
 - Template validity, in the style of `tests/test_plugin_manifest.py`.
 - `test_dispatch*.py`, `test_on_skill_call.py`, `test_counters.py` and `test_layer.py` parametrized
   over both hosts.
@@ -501,7 +677,10 @@ but that an existing login is rejected has not been confirmed.
 **Kiro CLI V3 and the IDE.** V3 moves hooks to standalone `.kiro/hooks/*.json` files with
 PascalCase triggers and adds global hooks and `SessionEnd`. V3 still accepts the 2.x hook form
 inside agent configs, so this port should keep working after an upgrade; a V3-native install is a
-later addition behind the same adapter. Global hooks would remove R1.
+later addition behind the same adapter. Global hooks would remove R1. kiro-cli 2.29.1 already has
+`kiro-cli agent upgrade`, which rewrites agent configs into "the universal format both engines
+load", so the V3 engine is present on the work build and the installer's files may need to survive
+that command.
 
 ## 10. Prior art
 
@@ -534,6 +713,46 @@ Checked on 2026-10-12:
    pass a higher default may be more comfortable. Recommended: keep 50 and adjust after real use.
 5. **Reflect at the end of the turn or on the next prompt?** Recommended: end of turn (`stop`),
    now that the probe shows it works, with `prompt` kept as a fallback mode.
+6. **The merge-request skill.** What the existing skill in the shared repository expects
+   (branch naming, target branch, description format). Its name and location go in `.env`, not here.
+   The publish instruction is written around it.
+7. **Layout of `self-learning-skills/`.** autoharness needs one directory per skill with a `SKILL.md`
+   inside. Confirm that fits the repository's conventions and that a `.gitignore` there is welcome.
+8. **Evidence files in the repository?** Recommended: no (4.10).
+
+## 12. As built: deviations from the design
+
+The sections above are the design as reviewed. The implementation differs in these places.
+
+| Design | As built | Why |
+|---|---|---|
+| `AUTOHARNESS_HOST` defaults to `kiro` in this fork (4.7) | Defaults to `claude`. The installer bakes `AUTOHARNESS_HOST=kiro` into every hook and MCP command it writes. | The 544 upstream tests and the Claude plugin keep working with no environment set, and upstream merges do not touch a flipped default. |
+| `host/base.py` with `normalize`, `emit_*`, `turn_boundary`, `reflect_modes`; one dispatcher routing canonical events (4.7, 4.9) | `host/__init__.py` (host name, root directory name, skill-name rule), `host/claude.py` (output protocol), `host/kiro.py` (payload translation, output protocol), and a separate `hook/kiro_dispatch.py` for Kiro's routing. `hook/dispatch.py:dispatch()` is unchanged; `main()` picks the route by host. | Claude's routing stays byte-for-byte what upstream tests. The shared pieces (counters, `on_stop`, promoter, session-start pass, usage counting) are called from both routes. |
+| Agent templates as `.json.tmpl` files and a curator prompt file under `kiro/agents/` (4.8) | `src/autoharness/install.py` generates both agent configs. The curator prompt is `agents/curator.md` without its Claude frontmatter, with a short Kiro preface. `kiro/install.py` is a wrapper that needs no `PYTHONPATH`. | Paths are absolute and per machine, so a static template adds nothing, and one curator text cannot drift from upstream's. |
+| `toolsSettings.subagent.availableAgents: ["autoharness-curator"]` on the main agent (4.8) | Not set. | It would restrict a default-like agent to that one subagent. If delegation turns out to need it, the curation instruction tells the agent to skip the pass and say so. |
+| Hook commands as `VAR=value python3 -m ...` (4.8) | `env VAR=value ... python3 -m autoharness.hook.dispatch`. | Works whether or not Kiro runs hook commands through a shell. |
+| The `agentSpawn` index lists project skills only when the relative `skill://` glob is unverified (4.6) | Lists learned skills of every active layer, with the directories to read them from. `AUTOHARNESS_INDEX_SUSPENDED=1` turns it off. | Recall then works even if no `skill://` entry loads. |
+| `AUTOHARNESS_DISABLE_PROJECT` sends skills to the global layer (4.10) | Also moves the project layer's state (counters, intent queue, snapshots) to `~/.kiro/autoharness/projects/<hash of the project path>/`. A project-level create is rerouted to global, not refused. If `AUTOHARNESS_DISABLE_GLOBAL` is also set, that one wins. | "Nothing is written into the repositories you work in" has to include `.kiro/autoharness/`. |
+| The publish summary is built from `git status` and the ledger (4.10) | From `git status` only: created, updated or removed, per skill. | The status already says everything the description needs. |
+| A publish record is written when the agent's reply has a URL, and without one otherwise (4.10) | Written when the reply has a merge-request URL, or when the folder's uncommitted changes went to zero during the turn. Otherwise nothing is recorded. | An `autoharness publish` that failed or had nothing to do must not leave a false record. |
+| The unpublished count is "changes not yet in a merge request" (4.10) | It counts uncommitted changes under the folder. Changes committed on a branch but not pushed are not counted. | Only `git status` is ever run. |
+| README rewritten for Kiro, upstream README moved (phase 8) | Upstream README kept, with a pointer to the new [kiro.md](kiro.md). | Keeps upstream merges free of conflicts in the README. |
+| `tests/test_dispatch*.py` and others parametrized over both hosts (section 8) | Kiro has its own test files (`test_host`, `test_kiro_host`, `test_kiro_dispatch`, `test_publish`, `test_kiro_install`, `test_envfile`, `test_minitoml`). Upstream's test files are unchanged apart from the Python-floor message. | Same reason as the unchanged dispatcher. |
+
+Added during implementation, not in the design:
+
+- The reflection's own tool calls and reads are not counted as work or as skill use, by the same
+  per-session mark that guards against a `stop` loop.
+- A consolidation that falls due on the same turn as a reflection is remembered in a flag file and
+  runs at the next turn boundary. It is skipped when fewer than two agent-created skills exist.
+- A payload without a usable `session_id` falls back to `KIRO_SESSION_ID` from the environment, then
+  to one shared counter.
+- `.gitignore` in the learned-skills folder also excludes `*/.ledger.jsonl` and the sidecar lock file.
+
+One more open point for the first run, in addition to section 7: the `stage_skill` MCP server finds
+its queue from its working directory. If Kiro starts MCP servers in a different directory than the
+session's, staged skills are queued where the `stop` hook does not look. The end-to-end test assumes
+both are the session directory.
 
 ## Sources
 

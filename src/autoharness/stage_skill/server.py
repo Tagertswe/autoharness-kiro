@@ -21,7 +21,7 @@ import json
 import os
 import sys
 
-from autoharness import config
+from autoharness import config, host
 from autoharness.lib import intent_queue, layer, validate
 
 _ACTIONS = ("create", "update", "patch", "remove_file", "delete")
@@ -72,6 +72,8 @@ def _schema_errors(params):
     errors = []
     if not _nonempty(params, "name"):
         errors.append(("schema", "name required (non-empty)"))
+    elif action == "create" and host.skill_name_error(params["name"]):
+        errors.append(("schema", host.skill_name_error(params["name"])))
     if not _nonempty(params, "reason") or not _nonempty(params, "evidence"):
         errors.append(("schema", "LED reason+evidence required"))
 
@@ -90,7 +92,7 @@ def _schema_errors(params):
         if has_files and not isinstance(params["files"], dict):
             errors.append(("schema", "files must be an object of relative path -> content"))
         if action == "create":
-            level = params.get("level", layer.PROJECT)
+            level = params.get("level", config.default_level())
             if level not in layer.LAYERS:
                 errors.append(("schema", f"level must be one of {layer.LAYERS}, got {level!r}"))
             elif level == layer.GLOBAL and config.DISABLE_GLOBAL:
@@ -143,7 +145,10 @@ def _intent(params):
     intent = {"action": action, "name": params["name"],
               "reason": params["reason"], "evidence": params["evidence"]}
     if action == "create":
-        intent["level"] = params.get("level", layer.PROJECT)
+        level = params.get("level", config.default_level())
+        # project layer off: a project create is rerouted, not refused — the author's lesson is
+        # still wanted, it just has only one place to live
+        intent["level"] = layer.GLOBAL if config.DISABLE_PROJECT else level
     if action in _BODY_ACTIONS:
         intent["body"] = params["body"]
         if params.get("files"):

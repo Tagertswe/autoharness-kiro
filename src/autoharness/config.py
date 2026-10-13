@@ -64,11 +64,22 @@ def _bool_env(name, default):
 
 INDEX_SUSPENDED = _bool_env("AUTOHARNESS_INDEX_SUSPENDED", False)
 DISABLE_GLOBAL = _bool_env("AUTOHARNESS_DISABLE_GLOBAL", False)
+# mirror of DISABLE_GLOBAL: every learned skill goes to the global layer and nothing is written
+# into the repository being worked in (lib/layer relocates the project state too). Both set would
+# leave no layer at all, so DISABLE_GLOBAL wins and this one is ignored.
+DISABLE_PROJECT = _bool_env(layer.DISABLE_PROJECT_ENV, False) and not DISABLE_GLOBAL
 
 
 def active_layers():
     """Layers this deployment may inspect and manage."""
-    return (layer.PROJECT,) if DISABLE_GLOBAL else layer.LAYERS
+    if DISABLE_GLOBAL:
+        return (layer.PROJECT,)
+    return (layer.GLOBAL,) if DISABLE_PROJECT else layer.LAYERS
+
+
+def default_level():
+    """The layer a create lands in when the author names none."""
+    return layer.GLOBAL if DISABLE_PROJECT else layer.PROJECT
 
 
 # folder-skill subfile caps (ponytail: placeholders like STAGE_MAX_BODY_BYTES, calibrate in experiments/)
@@ -115,3 +126,22 @@ RUN_ID_ENV = "AUTOHARNESS_RUN_ID"           # spawn injects the intent-queue run
 # and the shipped learn skill could never land anything. The main session's Stop drains this queue.
 INTERACTIVE_RUN_ID = "interactive"
 PROJECT_ROOT_ENV = "AUTOHARNESS_PROJECT_ROOT"  # same: repo root (where the queue is persisted)
+
+# Kiro host (docs/kiro-port-spec.md). There is no child session there: the working agent reflects
+# in its own conversation. "stop" asks for one more turn when the threshold is crossed, "prompt"
+# attaches the instruction to the next user prompt instead (for a build whose stop hook does not
+# fire), "off" leaves learning to the `autoharness learn` prompt.
+REFLECT_MODES = ("stop", "prompt", "off")
+REFLECT_MODE = os.environ.get("AUTOHARNESS_REFLECT_MODE", "stop").strip().lower()
+if REFLECT_MODE not in REFLECT_MODES:
+    warnings.warn(f"AUTOHARNESS_REFLECT_MODE={REFLECT_MODE!r} is not one of {REFLECT_MODES}; using 'stop'", stacklevel=1)
+    REFLECT_MODE = "stop"
+KIRO_CURATOR_AGENT = "autoharness-curator"   # the subagent the curation instruction delegates to
+STAGE_TOOL_KIRO = "@stage_skill/stage_skill"  # how Kiro names the stage_skill MCP tool
+# shared skills repository (4.10): a clone whose folder holds the learned skills, and the existing
+# skill (a SKILL.md, or a folder of skills) that says how to open a merge request for it. Site-specific, so they come from the gitignored .env.
+SHARED_SKILLS_REPO = os.environ.get("AUTOHARNESS_SHARED_SKILLS_REPO", "").strip()
+PUBLISH_SKILL = os.environ.get("AUTOHARNESS_PUBLISH_SKILL", "").strip()
+# open the merge request without being asked, as soon as a turn ends with unpublished skill changes
+AUTO_PUBLISH = _bool_env("AUTOHARNESS_AUTO_PUBLISH", False)
+PUBLISH_NOTE_DAYS = _int_env("AUTOHARNESS_PUBLISH_NOTE_DAYS", 7)  # how long a new session keeps listing a merge request

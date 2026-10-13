@@ -9,7 +9,7 @@ Each call appends one JSON line to <log dir>/log.jsonl (default ~/autoharness-pr
 AHPROBE_DIR). What it prints is deliberate: a marker word on stdout for the events whose output is
 supposed to reach the model, so asking the model which AHPROBE words it can see answers the
 injection question. Runs on any Python 3.6+, and logs the interpreter version because autoharness
-itself needs 3.11.
+itself needs 3.10.
 """
 import json
 import os

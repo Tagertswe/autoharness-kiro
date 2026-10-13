@@ -10,15 +10,29 @@ land in one place and survive worktree removal. Only the linked-worktree case is
 differs from git-common-dir): plain repos, repo subdirectories, and non-git directories keep cwd
 verbatim, so a nested project can never be attributed to an enclosing repo. Any git failure falls
 back to cwd (fail-safe).
+
+Two relocations for a deployment that keeps learned skills in a shared repository
+(docs/kiro-port-spec.md 4.10), both read from the environment because config imports this module:
+- AUTOHARNESS_GLOBAL_SKILLS_DIR moves the global layer's skills (and archive) out of the host
+  directory; state stays under the home directory.
+- AUTOHARNESS_DISABLE_PROJECT=1 moves the project layer's root under the home directory, keyed by
+  the project path, so counters and the intent queue are never written into the repository.
 """
+import hashlib
+import os
 import re
 import subprocess
 from functools import cache
 from pathlib import Path
 
+from autoharness import host
+
 GLOBAL = "global"
 PROJECT = "project"
 LAYERS = (GLOBAL, PROJECT)
+
+GLOBAL_SKILLS_DIR_ENV = "AUTOHARNESS_GLOBAL_SKILLS_DIR"
+DISABLE_PROJECT_ENV = "AUTOHARNESS_DISABLE_PROJECT"
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -55,11 +69,20 @@ def _main_worktree_root_resolved(cwd):
     return Path(cwd)
 
 
-def default_root(layer):
+def project_disabled():
+    return os.environ.get(DISABLE_PROJECT_ENV, "").strip() == "1"
+
+
+def default_root(layer, cwd=None):
     _check_layer(layer)
+    home_root = Path.home() / host.root_dirname()
     if layer == GLOBAL:
-        return Path.home() / ".claude"
-    return _main_worktree_root(str(Path.cwd())) / ".claude"
+        return home_root
+    project = _main_worktree_root(str(cwd or Path.cwd()))
+    if project_disabled():
+        digest = hashlib.sha256(str(project).encode("utf-8")).hexdigest()[:16]
+        return home_root / "autoharness" / "projects" / digest
+    return project / host.root_dirname()
 
 
 def _root(layer, root):
@@ -68,7 +91,13 @@ def _root(layer, root):
 
 
 def skills_dir(layer, root=None):
-    return _root(layer, root) / "skills"
+    base = _root(layer, root)
+    if layer == GLOBAL:
+        override = os.environ.get(GLOBAL_SKILLS_DIR_ENV, "").strip()
+        # only the real global root is redirected: an explicit root (tests, tools) keeps its own tree
+        if override and base == default_root(GLOBAL):
+            return Path(override).expanduser()
+    return base / "skills"
 
 
 def archive_dir(layer, root=None):

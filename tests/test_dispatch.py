@@ -368,9 +368,9 @@ def test_stop_with_empty_interactive_queue_writes_no_run_account(tmp_path, monke
 
 
 def _run_under_old_python(tmp_path, version=(3, 9, 6, "final", 0)):
-    # the host's bare `python3` may be older than the 3.11 floor (Xcode ships 3.9.6 at
+    # the host's bare `python3` may be older than the 3.10 floor (Xcode ships 3.9.6 at
     # /usr/bin/python3); simulate it in a child by pinning version_info and hiding tomllib,
-    # which is the stdlib module that entered in 3.11 and that redact.py imports at module level
+    # the 3.11 stdlib module redact.py prefers, so nothing past the guard can be what saves it
     probe = tmp_path / "old_python_probe.py"
     probe.write_text(
         "import sys\n"
@@ -404,7 +404,7 @@ def test_below_floor_python_names_the_floor_and_the_interpreter(tmp_path):
     # the point of the guard is that the operator can act on it: a generic host hook error with
     # nothing logged is what this replaces
     r = _run_under_old_python(tmp_path)
-    assert "3.11" in r.stderr
+    assert "3.10" in r.stderr
     assert "3.9" in r.stderr
     assert "hooks.json" in r.stderr
 

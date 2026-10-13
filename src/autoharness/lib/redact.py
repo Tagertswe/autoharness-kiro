@@ -8,10 +8,14 @@ credit_card), keeping sequences that fail the check in the stream as evidence.
 """
 import functools
 import re
-import tomllib
 from pathlib import Path
 
 from autoharness import config
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10: same subset, stdlib only (lib/minitoml.py)
+    from autoharness.lib import minitoml as tomllib
 
 
 def _passes_luhn(text):

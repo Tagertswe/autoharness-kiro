@@ -23,9 +23,12 @@ hand every model generation. autoharness bets one slice of it — the skill laye
 | **Only its own skills** | Touches only the skills it generated through this plugin — everything else, whether you wrote it or installed it, is left completely alone. |
 | **Evidence kept for later** | Every create/update logs its scenario and decision to a per-skill ledger — the raw material to build a benchmark from real usage if you ever want one. |
 
+> **Kiro CLI:** this fork also runs under Kiro CLI 2.x, installed locally from a clone with no
+> plugin, API key or network access. See [Kiro CLI setup](#kiro-cli-setup).
+
 ## Install
 
-**Requires Python 3.11+ as the `python3` on your PATH** — autoharness runs entirely as Python
+**Requires Python 3.10+ as the `python3` on your PATH** — autoharness runs entirely as Python
 (zero third-party dependencies); its hooks and MCP server won't fire without it. The hooks resolve
 bare `python3`, so an older interpreter earlier on your PATH (Xcode ships 3.9.6 at
 `/usr/bin/python3`) turns every hook off for the session; autoharness says so on stderr.
@@ -45,6 +48,42 @@ background. Cadence and lifecycle thresholds are tunable — see [Configuration]
 Nothing to invoke, but one entry point exists when you want it: **`/learn`** distills the session
 you're in right now — say it after working something out and the lesson goes through the same
 proposal-and-validation chain the background pass uses.
+
+### Kiro CLI setup
+
+Needs Kiro CLI 2.x and Python 3.10+ as `python3`. Nothing is published or downloaded: the agent
+runs straight from your clone.
+
+```
+git clone <this repository> ~/repos/autoharness-kiro
+cd ~/repos/autoharness-kiro
+python3 kiro/install.py
+kiro-cli agent set-default autoharness
+```
+
+That is the whole install. Start `kiro-cli chat` as usual; skills are learned into `~/.kiro/skills/`
+and `.kiro/skills/` of the project you are in. To keep your current default agent, use
+`kiro-cli chat --agent autoharness` per session, or `python3 kiro/install.py --into <agent>` to add
+the hooks to an agent you already have.
+
+In a session, type `autoharness learn` to distill the conversation now, `autoharness status` to list
+merge requests opened so far and skill changes not yet published, and `autoharness publish` to open
+a merge request (shared repository only).
+
+**Optional: keep learned skills in a team repository.** Before running the installer:
+
+```
+cp .env.example .env      # then edit the paths
+```
+
+`.env` is ignored by git, so the name and location of an internal repository stay on your machine.
+It sets the clone of the shared repository, the folder in it for self-learned skills, and the
+repository's own skills to follow when opening a merge request. With `AUTOHARNESS_AUTO_PUBLISH=1`
+the merge request is opened for you after skills change, and the session shows a note with its link. Re-run `python3 kiro/install.py`
+after editing it.
+
+Update with `git pull`; remove with `python3 kiro/install.py --uninstall`. Settings, storage
+locations and a first-run checklist are in [docs/kiro.md](docs/kiro.md).
 
 **MCP server naming.** The `.mcp.json` registers the server as `stage_skill`, but agent
 definitions reference the fully-qualified name `mcp__plugin_autoharness_stage_skill__stage_skill`.
