@@ -11,7 +11,7 @@ AUTOHARNESS_HOST=kiro, which hands the payload here:
                     at most one job — reflection, else consolidation, else (AUTO_PUBLISH) a merge
                     request for unpublished skill changes — plus any merge-request note, handed to
                     the agent as a stop-block reason so it takes one more turn.
-- userPromptSubmit  the `autoharness learn | publish | status` prompts; in prompt mode, the job the
+- userPromptSubmit  the `autoharness learn | publish | status | usage` prompts; in prompt mode, the job the
                     previous stop found due.
 
 Loop guard: a stop that follows a block fires like any other and nothing in its payload says so,
@@ -27,6 +27,7 @@ break the session it rides in.
 import json
 import os
 import sys
+import time
 
 from autoharness import config
 from autoharness.hook import (
@@ -38,10 +39,19 @@ from autoharness.hook import (
     spawn,
 )
 from autoharness.host import kiro
-from autoharness.lib import atomic, counters, layer, publish, sidecar, skill_store
+from autoharness.lib import (
+    atomic,
+    counters,
+    layer,
+    publish,
+    sidecar,
+    skill_store,
+    usage,
+)
 
 COMMAND_PREFIX = "autoharness"
-COMMANDS = ("learn", "publish", "status")
+COMMANDS = ("learn", "publish", "status", "usage")
+USAGE_DAYS = 30
 _FALLBACK_SESSION = "nosession"  # a payload without a usable session id still gets one counter, not a crash
 DENY_MESSAGE = (
     "autoharness manages this path and blocked the write. Do not retry and do not work around it "
@@ -86,6 +96,30 @@ def _pop(kind, session_id, proot):
     except OSError:
         pass
     return data
+
+
+def _start(sid, proot, data, text, *, shared=False):
+    """Mark the turn autoharness is asking for, with what lib/usage needs to account for it. `shared`:
+    the same turn also answers the user's prompt, so its cost is not autoharness's alone."""
+    _set(_JOB, sid, proot, {**data, "started": time.time(), "chars": len(text), "tools": 0, "shared": shared})
+    return text
+
+
+def _account(ev, sid, job, verdicts, groot):
+    try:
+        usage.append({
+            "session": sid, "kind": job.get("kind") or "note",
+            "seconds": round(max(0.0, time.time() - job["started"]), 1) if job.get("started") else None,
+            "tool_calls": job.get("tools") or 0,
+            "instruction_chars": job.get("chars") or 0, "response_chars": len(ev["response"]),
+            "shared_turn": bool(job.get("shared")),
+            "landed": sum(1 for v in verdicts if v.get("ok")),
+            "rejected": sum(1 for v in verdicts if not v.get("ok")),
+            "merge_request": publish.find_url(ev["response"]) if job.get("kind") == "publish" else None,
+            "reported": ev["reported"] or None,
+        }, groot)
+    except OSError:
+        pass  # accounting must never cost a landing
 
 
 _JOB = "job"   # this session is in a turn autoharness asked for (or is about to end one)
@@ -165,8 +199,10 @@ def _on_tool(ev, sid, roots):
         for path in ev["paths"]:
             if guarded(path, roots):
                 return {"deny": DENY_MESSAGE}
-    if _peek(_JOB, sid, proot):
-        return {}  # the reflection's own calls are neither work to reflect on nor skill use
+    job = _peek(_JOB, sid, proot)
+    if job:  # the reflection's own calls are neither work to reflect on nor skill use: only its cost
+        _set(_JOB, sid, proot, {**job, "tools": (job.get("tools") or 0) + 1})
+        return {}
     counters.bump_session(sid, proot)
     if ev["kind"] == "read":
         for path in ev["paths"]:
@@ -238,7 +274,8 @@ def _on_stop(ev, sid, roots):
     proot, groot = roots[layer.PROJECT], roots[layer.GLOBAL]
     job = _pop(_JOB, sid, proot)
     if job:  # the turn autoharness asked for just ended: land what it staged, never ask again
-        promoter.drain(config.INTERACTIVE_RUN_ID, roots=roots)
+        verdicts = promoter.drain(config.INTERACTIVE_RUN_ID, roots=roots)
+        _account(ev, sid, job, verdicts, groot)
         if job.get("kind") == "publish":
             _record_publish(ev, sid, job, groot)
             return {}
@@ -248,8 +285,7 @@ def _on_stop(ev, sid, roots):
         if config.REFLECT_MODE == "prompt":
             _set(_DUE, sid, proot, auto)
             return {}
-        _set(_JOB, sid, proot, auto)
-        return {"block": reflect.publish_request(auto["lines"], groot, auto=True)}
+        return {"block": _start(sid, proot, auto, reflect.publish_request(auto["lines"], groot, auto=True))}
     if not config.DISABLE_GLOBAL:
         counters.bump_request(layer.GLOBAL, groot)
     pcount = counters.bump_request(layer.PROJECT, proot)
@@ -272,8 +308,7 @@ def _on_stop(ev, sid, roots):
         publish.mark_announced(sid, rows, groot)
     if not parts:
         return {}
-    _set(_JOB, sid, proot, auto or {"kind": kind or "note"})
-    return {"block": "\n\n".join(parts)}
+    return {"block": _start(sid, proot, auto or {"kind": kind or "note"}, "\n\n".join(parts))}
 
 
 def _command(prompt):
@@ -290,8 +325,7 @@ def _on_prompt(ev, sid, roots):
     if command == "learn":
         _pop(_DUE, sid, proot)
         counters.reset_session(sid, proot)
-        _set(_JOB, sid, proot, {"kind": "learn"})
-        return {"context": reflect.reflection(roots, forced=True)}
+        return {"context": _start(sid, proot, {"kind": "learn"}, reflect.reflection(roots, forced=True))}
     if command == "publish":
         pairs = publish.changes(groot)
         if pairs is None:
@@ -300,8 +334,10 @@ def _on_prompt(ev, sid, roots):
         if not pairs:
             return {"context": reflect.publish_unavailable("there are no unpublished skill changes.")}
         lines = publish.summary(pairs)
-        _set(_JOB, sid, proot, {"kind": "publish", "before": len(pairs), "lines": lines})
-        return {"context": reflect.publish_request(lines, groot)}
+        return {"context": _start(sid, proot, {"kind": "publish", "before": len(pairs), "lines": lines},
+                                  reflect.publish_request(lines, groot))}
+    if command == "usage":
+        return {"context": reflect.usage_report(usage.read(USAGE_DAYS, groot), USAGE_DAYS, usage.directory(groot))}
     if command == "status":
         return {"context": reflect.status(publish.records(groot), publish.changes(groot))}
     parts = []
@@ -309,11 +345,11 @@ def _on_prompt(ev, sid, roots):
     if due and config.REFLECT_MODE == "prompt":
         kind = due.get("kind")
         if kind == "publish":
-            _set(_JOB, sid, proot, due)
-            parts.append(reflect.publish_request(due.get("lines") or [], groot, auto=True, then_answer=True))
+            parts.append(_start(sid, proot, due, reflect.publish_request(
+                due.get("lines") or [], groot, auto=True, then_answer=True), shared=True))
         else:
-            _set(_JOB, sid, proot, {"kind": kind})
-            parts.append(_job_text(kind, sid, due.get("pcount", 0), roots, then_answer=True))
+            parts.append(_start(sid, proot, {"kind": kind},
+                                _job_text(kind, sid, due.get("pcount", 0), roots, then_answer=True), shared=True))
     rows = publish.pending(sid, groot)
     if rows:
         parts.append(reflect.note(rows))

@@ -57,6 +57,7 @@ Prompts you can type:
 | `autoharness learn` | Reflect now, whatever the counter says. Use it before closing a short session. |
 | `autoharness status` | List merge requests opened so far and skill changes not yet published. |
 | `autoharness publish` | Open a merge request for the learned skills (shared repository only). |
+| `autoharness usage` | Show what the turns autoharness asked for added up to over the last 30 days. |
 
 ## Settings
 
@@ -109,6 +110,28 @@ AUTOHARNESS_AUTO_PUBLISH=1
 - A skill in the global library must not contain absolute paths or project names; such a proposal
   is rejected and the agent is told why.
 
+## What autoharness itself costs
+
+Reflection, consolidation, publishing and merge request notes are extra turns, and extra turns use
+credits. Every such turn is written as one line to `~/.kiro/autoharness/usage/YYYY-MM-DD.jsonl`
+when it ends:
+
+| Field | Meaning |
+|---|---|
+| `ts`, `session` | When the turn ended (local time) and in which Kiro session. |
+| `kind` | `reflect`, `learn`, `curate`, `publish` or `note`. |
+| `seconds`, `tool_calls` | How long the turn took and how many tool calls it made. |
+| `instruction_chars`, `response_chars` | Size of the instruction autoharness gave and of the agent's reply. |
+| `landed`, `rejected` | Skill proposals written and refused when the turn ended. |
+| `merge_request` | The link, for a publish turn that produced one. |
+| `shared_turn` | True in prompt mode, where the same turn also answers your prompt. |
+| `reported` | Any credit, usage or token field Kiro put in the hook payload. Empty on 2.29.1. |
+
+**Credits are not in the log.** Kiro CLI 2.29.1 passes a hook the reply text and nothing about
+usage, so autoharness cannot know the figure. The log tells you which turns were autoharness's and
+when; match them against the credits Kiro itself shows. `autoharness usage` prints the totals per
+kind. Nothing prunes the folder; delete old files when you like.
+
 ## Where things are stored
 
 | What | Where |
@@ -117,6 +140,7 @@ AUTOHARNESS_AUTO_PUBLISH=1
 | Project learned skills | `<project>/.kiro/skills/` (not with `AUTOHARNESS_DISABLE_PROJECT=1`) |
 | Archived skills | `.archive/` inside the skills directory |
 | Global state, merge request records | `~/.kiro/autoharness/` |
+| Cost log, one file per day | `~/.kiro/autoharness/usage/YYYY-MM-DD.jsonl` |
 | Project state (counters, queue, snapshots) | `<project>/.kiro/autoharness/`, or `~/.kiro/autoharness/projects/<id>/` with `AUTOHARNESS_DISABLE_PROJECT=1` |
 
 The project is the directory Kiro is started in. Start Kiro from the repository root.

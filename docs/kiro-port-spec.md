@@ -483,6 +483,13 @@ and cleared on success), so a publish that fails or is declined is not requested
 prompt mode the instruction is attached to the next prompt instead. If the tree went clean but no
 link was found in the reply, the session is not marked as told and gets the note at its next prompt.
 
+**Cost log (`lib/usage.py`).** Every turn autoharness asks for is accounted for when it ends: one
+JSON line in `~/.kiro/autoharness/usage/YYYY-MM-DD.jsonl` with the session, the kind of turn, its
+duration, its tool calls, the size of the instruction and of the reply, what landed, and the merge
+request link for a publish. A hook is given no credit or token figure on 2.29.1, so credits are not
+recorded; a payload field whose name contains credit, usage or token is stored verbatim if a later
+build adds one. `autoharness usage` prints 30-day totals per kind.
+
 **Announcing the merge request in other sessions.** Once a merge request exists, every running
 session that uses the autoharness agent mentions it once, with the link.
 

@@ -8,7 +8,7 @@ carrier feeds its reflector, addressed to a reader that already holds the conver
 """
 from autoharness import config
 from autoharness.hook import spawn
-from autoharness.lib import layer, publish
+from autoharness.lib import layer, publish, usage
 
 _INDEX_DESC_MAX = 240  # the index rides inside a stop-block reason: a scan surface, not the full trigger text
 
@@ -141,4 +141,19 @@ def status(rows, pairs):
         lines += [f"- {line}" for line in publish.summary(pairs)]
         if pairs:
             lines.append("Say `autoharness publish` to open a merge request for them.")
+    return "\n".join(lines) + "\n"
+
+
+def usage_report(pairs, days, folder):
+    """`autoharness usage`: what the turns autoharness asked for added up to (lib/usage)."""
+    lines = ["The user asked what autoharness itself has cost. Show them the following, unchanged:", "",
+             f"Turns autoharness asked for in the last {days} days:"]
+    for kind, t in usage.totals(pairs):
+        lines.append(f"- {kind}: {t['turns']} turn(s), {round(t['seconds'])} s, {t['tool_calls']} tool call(s), "
+                     f"{t['chars']} characters in and out")
+    if not pairs:
+        lines.append("- none recorded")
+    lines += ["", f"One log file per day: {folder}",
+              "Kiro does not tell a hook how many credits a turn used, so credits are not in the log. "
+              "Each entry has the time and session of the turn, to match against Kiro's own credit figures."]
     return "\n".join(lines) + "\n"

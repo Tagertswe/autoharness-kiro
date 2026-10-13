@@ -78,6 +78,9 @@ def normalize(payload):
         "tool": _text(payload.get("tool_name")),
         "kind": kind,
         "paths": _tool_paths(tool_input, kind, cwd),
+        # nothing like this exists on 2.29.1; kept so a build that reports usage gets it logged (lib/usage)
+        "reported": {k: v for k, v in payload.items()
+                     if isinstance(k, str) and any(w in k.lower() for w in ("credit", "usage", "token"))},
     }
 
 
