@@ -32,7 +32,9 @@ AGENT = "autoharness"
 CURATOR = "autoharness-curator"
 EVENTS = ("agentSpawn", "userPromptSubmit", "preToolUse", "stop")
 DISPATCH = "autoharness.hook.dispatch"
-MANIFEST = ".autoharness-install.json"
+# not *.json: Kiro reads every .json file in an agents directory as an agent config
+MANIFEST = ".autoharness-install.manifest"
+_OLD_MANIFEST = ".autoharness-install.json"  # where it was first written; read once, then removed
 BACKUP_SUFFIX = ".autoharness-bak"
 GITIGNORE_MARK = "# written by autoharness: local bookkeeping that must not reach the shared repository"
 GITIGNORE = (GITIGNORE_MARK + "\n"
@@ -190,10 +192,14 @@ def write_gitignore(values):
     return path
 
 
+def _manifest(agents):
+    return _read(agents / MANIFEST) or _read(agents / _OLD_MANIFEST)
+
+
 def install(agents, values, home, *, python="python3", into=None):
     agents.mkdir(parents=True, exist_ok=True)
     configs = build(values, home, python)
-    manifest = _read(agents / MANIFEST) or {"owned": [], "merged": {}}
+    manifest = _manifest(agents) or {"owned": [], "merged": {}}
     written = []
     targets = [CURATOR] if into else [AGENT, CURATOR]
     for name in targets:
@@ -222,11 +228,12 @@ def install(agents, values, home, *, python="python3", into=None):
         _write(path, agent)
         written.append(path)
     _write(agents / MANIFEST, manifest)
+    (agents / _OLD_MANIFEST).unlink(missing_ok=True)
     return written
 
 
 def uninstall(agents):
-    manifest = _read(agents / MANIFEST) or {"owned": [f"{AGENT}.json", f"{CURATOR}.json"], "merged": {}}
+    manifest = _manifest(agents) or {"owned": [f"{AGENT}.json", f"{CURATOR}.json"], "merged": {}}
     removed = []
     for name in manifest.get("owned", []):
         path = agents / name
@@ -241,10 +248,8 @@ def uninstall(agents):
         _unmerge(agent, added)
         _write(path, agent)
         removed.append(path)
-    try:
-        (agents / MANIFEST).unlink()
-    except OSError:
-        pass
+    for name in (MANIFEST, _OLD_MANIFEST):
+        (agents / name).unlink(missing_ok=True)
     return removed
 
 

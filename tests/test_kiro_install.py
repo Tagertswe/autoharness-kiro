@@ -185,6 +185,32 @@ def test_into_an_agent_with_its_own_stage_skill_server_is_refused_untouched(home
     assert (agents / "work.json").read_text() == text
 
 
+def test_every_json_file_in_the_agents_directory_is_an_agent_config(home):
+    """Kiro loads each *.json there as an agent and reports anything else as an invalid config."""
+    agents = home / "agents"
+    agents.mkdir(parents=True)
+    (agents / "work.json").write_text(json.dumps({"name": "work"}))
+    install.install(agents, _values(), home)
+    install.install(agents, _values(), home, into="work")
+    for path in agents.iterdir():
+        if path.suffix == ".json":
+            assert _load(path).get("name") == path.stem, path.name
+    install.uninstall(agents)
+    assert sorted(p.name for p in agents.iterdir()) == ["work.json", "work.json" + install.BACKUP_SUFFIX]
+
+
+def test_a_manifest_from_the_first_release_is_picked_up_and_replaced(home):
+    agents = home / "agents"
+    agents.mkdir(parents=True)
+    (agents / "work.json").write_text(json.dumps({"name": "work"}))
+    install.install(agents, _values(), home, into="work")
+    (agents / install.MANIFEST).rename(agents / install._OLD_MANIFEST)  # as the first release left it
+    install.install(agents, _values(), home, into="work")
+    assert not (agents / install._OLD_MANIFEST).exists()
+    install.uninstall(agents)
+    assert _load(agents / "work.json") == {"name": "work"}
+
+
 def test_into_a_missing_agent_fails_before_touching_anything(home):
     with pytest.raises(SystemExit, match="cannot merge into"):
         install.install(home / "agents", _values(), home, into="nope")
