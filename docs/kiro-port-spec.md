@@ -1,9 +1,11 @@
 # Spec: porting autoharness to Kiro CLI 2.x
 
-Status: revision 6. Implemented on 2026-10-13, phases 1 to 8, with unit tests and a real-process
-end-to-end test. Not yet run inside a real Kiro session: the first-run checklist in
-[kiro.md](kiro.md) covers what could not be tested without one. Where the code differs from the
-design below, section 12 says how.
+Status: revision 7. Implemented on 2026-10-13, phases 1 to 8, then extended up to 2026-10-15 with
+automatic publish, a cost log and safety fixes, with unit tests and a real-process end-to-end test
+on Python 3.10 and 3.14. First installed on the work machine with `--into` an existing agent; one
+defect was found and fixed (section 7). Not yet exercised through a full learn-and-publish cycle
+inside Kiro: the first-run checklist in [kiro.md](kiro.md) covers what is left. Where the code
+differs from the design below, section 12 says how; section 13 is the handoff list.
 Written 2026-10-12 against upstream `tigerless-labs/autoharness` at `3252d25` (plugin version 0.5.3).
 
 Revision history:
@@ -19,6 +21,9 @@ Revision history:
 - r5: learned skills live in a folder of a shared skills repository and reach it through merge
   requests (4.10).
 - r6: implemented. Section 12 lists the deviations from the design.
+- r7: automatic publish, a folder of skills as the publish guide, the cost log, the name-collision
+  and foreign-`stage_skill` guards, the installer manifest fix from the first install at work, and
+  a handoff section (13) for continuing the work on the work machine.
 
 ## 1. Summary
 
@@ -616,6 +621,18 @@ Still unchecked, none of which blocks starting:
 6. Whether a `stop` hook can block twice in a row. Automatic publish after a learning turn needs
    it; the probe blocked once. If it cannot, the publish is asked for at the end of the next turn
    only when that turn is not itself a learning turn, so set `AUTOHARNESS_REFLECT_MODE=prompt`.
+7. Where Kiro keeps per-turn credits. The official docs describe `/usage` (billing and credits,
+   remaining credits) and say sessions are saved in a local database under `~/.kiro/`, but not
+   whether credits are stored. A third-party cost tracker (CodeBurn) reads per-turn credits from
+   `metering_usage` in `~/.kiro/sessions/cli/<session id>.json`, beside a `<session id>.jsonl`; it
+   does not say for which versions. If that file exists on 2.29.1, `lib/usage.py` can read the real
+   credit figure for each autoharness turn by the session id the hook already has.
+8. Where Kiro starts the `stage_skill` MCP server (see the end of section 12).
+
+Observed on the first install at work (2026-10-14), `--into` an existing agent: Kiro printed
+`invalid agent config: .autoharness-install.json` at session start. Kiro reads every `*.json` in
+an agents directory as an agent config, and the installer's manifest lived there under that name.
+Fixed: the manifest is now `.autoharness-install.manifest`, a re-install migrates the old file.
 
 ## 8. Implementation phases
 
@@ -713,18 +730,20 @@ Checked on 2026-10-12:
 ## 11. Open decisions
 
 1. **Keep the Claude path or drop it?** Recommended: keep it behind the adapter (4.7).
-2. **Own agent or merge into an existing one?** If you already use a custom agent at work,
-   `--into` is the better fit; otherwise the `autoharness` agent as default.
+2. **Own agent or merge into an existing one?** Decided: `--into` the custom agent already used
+   at work. The standalone `autoharness` agent stays for anyone without one.
 3. **Install scope.** Recommended: global, so every repository learns.
 4. **Default cadence.** Upstream's 50 tool calls was tuned for a background pass. With a visible
    pass a higher default may be more comfortable. Recommended: keep 50 and adjust after real use.
 5. **Reflect at the end of the turn or on the next prompt?** Recommended: end of turn (`stop`),
    now that the probe shows it works, with `prompt` kept as a fallback mode.
-6. **The merge-request skill.** What the existing skill in the shared repository expects
-   (branch naming, target branch, description format). Its name and location go in `.env`, not here.
-   The publish instruction is written around it.
-7. **Layout of `self-learning-skills/`.** autoharness needs one directory per skill with a `SKILL.md`
-   inside. Confirm that fits the repository's conventions and that a `.gitignore` there is welcome.
+6. **The merge-request skill.** Partly decided: the shared repository keeps a folder of its own
+   skills (conventions, merge-request creation), and `AUTOHARNESS_PUBLISH_SKILL` points at that
+   folder in `.env`. Still open: whether the agent picks the right skill from it, and what branch
+   naming, target branch and description format those skills expect.
+7. **Layout of `self-learning-skills/`.** Decided: a `self-learning-skills` folder next to the
+   repository's own skills folder, path in `.env`. Still to confirm with the repository's owners
+   that one directory per skill and a `.gitignore` in it are welcome.
 8. **Evidence files in the repository?** Recommended: no (4.10).
 
 ## 12. As built: deviations from the design
@@ -755,11 +774,57 @@ Added during implementation, not in the design:
 - A payload without a usable `session_id` falls back to `KIRO_SESSION_ID` from the environment, then
   to one shared counter.
 - `.gitignore` in the learned-skills folder also excludes `*/.ledger.jsonl` and the sidecar lock file.
+- `AUTOHARNESS_PUBLISH_SKILL` may name a folder of skills instead of one `SKILL.md`. The installer
+  then loads `<folder>/*/SKILL.md`, and the publish instruction tells the agent to follow the ones
+  covering the repository's conventions and merge-request creation.
+- Automatic publish, `AUTOHARNESS_AUTO_PUBLISH=1` (described in 4.10). One attempt per change set,
+  remembered in `~/.kiro/autoharness/auto_publish.json`; the publish instruction asks for a
+  fixed-form note with the full merge request link; a publish without a captured link leaves the
+  session unmarked so the note follows at its next prompt.
+- A create whose name matches a skill autoharness did not create is rejected (`routing`). Before
+  this, upstream's create path overwrote that skill's `SKILL.md`.
+- `--into` refuses an agent that already has its own MCP server named `stage_skill`, and leaves the
+  file untouched. The installer manifest is `.autoharness-install.manifest`, not `*.json`.
+- Cost log, `lib/usage.py` (described in 4.10): one line per autoharness turn in
+  `~/.kiro/autoharness/usage/YYYY-MM-DD.jsonl`, and the `autoharness usage` prompt. No credits:
+  a hook is given none (section 7, item 7).
+- Python 3.10 pinned as the target: `.python-version`, the CI lint job and the README badge.
+- `.kiro/steering/` (product, tech, structure) for a Kiro agent working on this repository; the
+  rest of `.kiro/` is ignored by git.
 
 One more open point for the first run, in addition to section 7: the `stage_skill` MCP server finds
 its queue from its working directory. If Kiro starts MCP servers in a different directory than the
 session's, staged skills are queued where the `stop` hook does not look. The end-to-end test assumes
 both are the session directory.
+
+## 13. Handoff: state and next steps
+
+For whoever continues this, human or agent, on the work machine. The steering files in
+`.kiro/steering/` carry the working rules; this is the state.
+
+**Where it stands.** Everything in sections 4 and 12 is implemented and tested: 684 tests pass on
+Python 3.14 and 682 on 3.10 (two skips there are expected: the `tomllib` comparison and a check that
+needs a git checkout). It has been installed `--into` an existing agent at work once.
+
+**Setting up a clone at work.**
+
+1. Clone, then `cp .env.example .env` and fill in the paths. `.env` is never committed.
+2. `python3 kiro/install.py --into <agent>` (or the standalone agent), then
+   `kiro-cli agent validate --path ~/.kiro/agents/<agent>.json`.
+3. If pytest is available: `python3 -m pytest -q`.
+
+**Next steps, in order.**
+
+1. Run the first-run checklist in [kiro.md](kiro.md) and record what differs in section 7.
+2. Check where Kiro keeps per-turn credits (section 7, item 7). The command in the guide's cost
+   section prints only field names. If `~/.kiro/sessions/cli/<session id>.json` holds them, add a
+   reader to `lib/usage.py` that fills a `credits` field per autoharness turn, matched by session id
+   and turn time, with tests on a recorded fixture with values replaced.
+3. Do one real `autoharness publish` against the shared repository and tune
+   `reflect.publish_request` to what its merge-request skills expect (open decision 6).
+4. Re-run the probe after any Kiro upgrade, and check that `kiro-cli agent upgrade` leaves the
+   merged hooks intact (section 9).
+5. Calibrate `AUTOHARNESS_REFLECT_EVERY_N` after a week of real use (open decision 4).
 
 ## Sources
 
@@ -768,7 +833,10 @@ both are the session directory.
   [Hook actions](https://kiro.dev/docs/hooks/actions/), [V3 hooks migration](https://kiro.dev/docs/cli/v3/hooks-migration/)
   (2.x event names, tool groups), [Agent configuration reference](https://kiro.dev/docs/custom-agents/configuration-reference/),
   [Skills](https://kiro.dev/docs/skills/), [Headless mode](https://kiro.dev/docs/cli/headless/),
-  [CLI commands](https://kiro.dev/docs/reference/cli-commands/)
+  [CLI commands](https://kiro.dev/docs/reference/cli-commands/),
+  [Slash commands](https://kiro.dev/docs/reference/slash-commands/) (`/usage`),
+  [Session management](https://kiro.dev/docs/cli/chat/session-management/)
+- Per-turn credits in Kiro session files, third party: [CodeBurn Kiro provider notes](https://github.com/getagentseal/codeburn/blob/main/docs/providers/kiro.md)
 - 2.x probes: [vshulcz/deja-vu#4304](https://github.com/vshulcz/deja-vu/issues/4304) (kiro-cli 2.22.0:
   payloads, stdout injection, default agent), [martin-conur/task-force#221](https://github.com/martin-conur/task-force/issues/221)
   (kiro-cli 2.24.0: hook location, events firing, stdout injection),

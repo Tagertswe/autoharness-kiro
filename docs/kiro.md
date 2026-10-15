@@ -132,6 +132,32 @@ usage, so autoharness cannot know the figure. The log tells you which turns were
 when; match them against the credits Kiro itself shows. `autoharness usage` prints the totals per
 kind. Nothing prunes the folder; delete old files when you like.
 
+Kiro may keep per-turn credits in its own session files (a third-party tool reads them from
+`~/.kiro/sessions/cli/<session id>.json`; not confirmed for 2.29.1). To see whether yours does,
+this prints field names and types only, plus values of fields named like meter, credit, usage or
+cost:
+
+```
+python3 - <<'PY'
+import json, pathlib
+files = sorted(pathlib.Path.home().glob(".kiro/sessions/cli/*.json"), key=lambda p: p.stat().st_mtime)
+print("session json files:", len(files))
+def walk(v, path=""):
+    if isinstance(v, dict):
+        for k, x in v.items(): walk(x, f"{path}.{k}")
+    elif isinstance(v, list):
+        print(f"{path}[]  ({len(v)} items)")
+        if v: walk(v[-1], path + "[-1]")
+    elif any(w in path.lower() for w in ("meter", "credit", "usage", "cost")):
+        print(f"{path}: {type(v).__name__} = {v}")
+    else:
+        print(f"{path}: {type(v).__name__}")
+if files: walk(json.load(open(files[-1])))
+PY
+```
+
+If it finds none, list `~/.kiro/` and `~/.local/share/kiro-cli/` instead.
+
 ## Where things are stored
 
 | What | Where |

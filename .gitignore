@@ -1,4 +1,7 @@
 .claude/
+# Kiro: steering is shared; agents, skills and state a local install or session writes are not
+.kiro/*
+!.kiro/steering/
 
 __pycache__/
 *.py[cod]
